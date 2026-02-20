@@ -1,14 +1,31 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
-import "@openzeppelin/contracts/utils/Base64.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 
+error EmptyUsername();
+error UsernameTooLong();
+
+/// @title UsernameSVG — On-chain SVG generator for username NFTs
+/// @author CAW Team
+/// @notice Generates Base64-encoded SVG images with embedded usernames for NFT metadata
 contract UsernameSVG is Ownable {
+    /// @notice Maximum allowed username length in bytes
+    uint256 public constant MAX_USERNAME_LENGTH = 32;
+    /// @notice Description field used in generated NFT metadata
     string public description = "Username SVGs with embedded usernames";
 
+    /// @notice Generates a Base64-encoded data URI containing SVG image and JSON metadata
+    /// @param username The username to embed in the SVG (max 32 bytes)
+    /// @return A fully formed data URI for use as NFT tokenURI
     function generate(string memory username) public view returns (string memory) {
+        uint256 len = bytes(username).length;
+        if (len == 0) revert EmptyUsername();
+        if (len > MAX_USERNAME_LENGTH) revert UsernameTooLong();
+
+        string memory safe = _sanitize(username);
+
         string memory svg = string(abi.encodePacked(
             '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 1024">',
             '<defs>',
@@ -20,7 +37,7 @@ contract UsernameSVG is Ownable {
             '</defs>',
             '<rect class="cls-1" width="1024" height="1024" rx="42.8"/>',
             '<text class="cls-2" style="text-anchor:middle;" x="512" y="512">',
-            username,
+            safe,
             '</text>',
             '<rect class="cls-3" width="1024" height="1024" rx="42.8"/>',
             '<path d="M512,780.76c-134.12,0-243.22,109.12-243.23,243.24H304.5c0-114.41,93.08-207.5,207.49-207.5S719.49,909.59,719.5,1024h35.73C755.22,889.88,646.11,780.76,512,780.76Z"/>',
@@ -34,13 +51,67 @@ contract UsernameSVG is Ownable {
         ));
 
         string memory json = Base64.encode(bytes(string(abi.encodePacked(
-            '{"name": "', username, '", "description": "', description, '", "image": "data:image/svg+xml;base64,', Base64.encode(bytes(svg)), '"}'
+            '{"name": "', safe, '", "description": "', description, '", "image": "data:image/svg+xml;base64,', Base64.encode(bytes(svg)), '"}'
         ))));
 
         return string(abi.encodePacked('data:application/json;base64,', json));
     }
 
+    /// @notice Updates the description field used in generated metadata (owner only)
+    /// @param _description The new description string
     function setDescription(string memory _description) public onlyOwner {
         description = _description;
+    }
+
+    /// @dev Escapes XML/JSON special characters to prevent SVG/JSON injection.
+    function _sanitize(string memory input) internal pure returns (string memory) {
+        bytes memory b = bytes(input);
+        // Worst case: every char becomes 6 chars (" -> &quot;)
+        bytes memory result = new bytes(b.length * 6);
+        uint256 j = 0;
+
+        for (uint256 i = 0; i < b.length; i++) {
+            bytes1 c = b[i];
+            if (c == 0x26) {            // &
+                result[j++] = 0x26; // &
+                result[j++] = 0x61; // a
+                result[j++] = 0x6D; // m
+                result[j++] = 0x70; // p
+                result[j++] = 0x3B; // ;
+            } else if (c == 0x3C) {     // <
+                result[j++] = 0x26; // &
+                result[j++] = 0x6C; // l
+                result[j++] = 0x74; // t
+                result[j++] = 0x3B; // ;
+            } else if (c == 0x3E) {     // >
+                result[j++] = 0x26; // &
+                result[j++] = 0x67; // g
+                result[j++] = 0x74; // t
+                result[j++] = 0x3B; // ;
+            } else if (c == 0x22) {     // "
+                result[j++] = 0x26; // &
+                result[j++] = 0x71; // q
+                result[j++] = 0x75; // u
+                result[j++] = 0x6F; // o
+                result[j++] = 0x74; // t
+                result[j++] = 0x3B; // ;
+                // Adjust: quot is 6 chars, update result size accordingly
+            } else if (c == 0x27) {     // '
+                result[j++] = 0x26; // &
+                result[j++] = 0x23; // #
+                result[j++] = 0x33; // 3
+                result[j++] = 0x39; // 9
+                result[j++] = 0x3B; // ;
+            } else {
+                result[j++] = c;
+            }
+        }
+
+        // Trim result to actual length
+        bytes memory trimmed = new bytes(j);
+        for (uint256 k = 0; k < j; k++) {
+            trimmed[k] = result[k];
+        }
+        return string(trimmed);
     }
 }
